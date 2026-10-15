@@ -1,0 +1,46 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    # Windows only: the transport is COM.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Pester
+        shell: powershell
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -MinimumVersion 5.0 -Force -SkipPublisherCheck -Scope CurrentUser
+          (Get-Module -ListAvailable Pester | Select-Object -First 1).Version
+
+      # No Adobe software on the runner. That is the point -- every app interaction
+      # is behind an injectable probe.
+      - name: Pester (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          $r = Invoke-Pester -Path tests -PassThru
+          if ($r.FailedCount -gt 0) { exit 1 }
+
+      - name: Pester (PowerShell 7)
+        shell: pwsh
+        run: |
+          Install-Module Pester -MinimumVersion 5.0 -Force -SkipPublisherCheck -Scope CurrentUser
+          $r = Invoke-Pester -Path tests -PassThru
+          if ($r.FailedCount -gt 0) { exit 1 }
+
+      - name: Module loads and exports what the manifest claims
+        shell: powershell
+        run: |
+          Import-Module .\src\AdobeScriptRunner -Force
+          $m = Get-Module AdobeScriptRunner
+          $declared = (Import-PowerShellDataFile .\src\AdobeScriptRunner\AdobeScriptRunner.psd1).FunctionsToExport
+          $missing = $declared | Where-Object { -not $m.ExportedFunctions.ContainsKey($_) }
+          if ($missing) { Write-Error "not exported: $($missing -join ', ')"; exit 1 }
+          "exports $($m.ExportedFunctions.Count) functions"

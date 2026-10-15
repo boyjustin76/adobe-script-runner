@@ -1,0 +1,8 @@
+_job.txt
+_target.txt
+_result.txt
+bridge.jsx.bak
+*_report.txt
+*_fail.png
+.vscode/
+TestResults.xml
