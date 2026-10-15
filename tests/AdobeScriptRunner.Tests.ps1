@@ -144,12 +144,21 @@ Describe 'Write-JobPointer' {
 
     It 'writes UTF-8 with no BOM' {
         # ExtendScript's File.read() hands the BOM back inside the string, and the
-        # path it produces does not exist. ASCII is not an option: real paths here
-        # contain non-ASCII characters.
-        $file = Write-JobPointer -WorkDir $dir -JobPath 'C:\작업\build.jsx'
+        # path it produces does not exist. ASCII is not an option either: real paths
+        # here contain non-ASCII characters.
+        #
+        # The non-ASCII characters are built from code points on purpose. Windows
+        # PowerShell 5.1 decodes a .ps1 with no BOM using the machine's ANSI
+        # codepage, so a literal here would mean different things on different
+        # machines -- which is a trap this very project has been bitten by twice.
+        $nonAscii = [string][char]0xC791 + [char]0xC5C5      # Korean, 2 chars
+        $jobPath = "C:\$nonAscii\build.jsx"
+
+        $file = Write-JobPointer -WorkDir $dir -JobPath $jobPath
         $bytes = [System.IO.File]::ReadAllBytes($file)
-        $bytes[0..2] | Should -Not -Be @(0xEF, 0xBB, 0xBF)
+        ($bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) |
+            Should -BeFalse -Because 'a BOM ends up inside the path ExtendScript reads'
         [System.IO.File]::ReadAllText($file, [System.Text.Encoding]::UTF8) |
-            Should -Be 'C:/작업/build.jsx'
+            Should -Be "C:/$nonAscii/build.jsx"
     }
 }

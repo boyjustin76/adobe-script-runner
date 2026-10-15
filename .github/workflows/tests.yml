@@ -30,9 +30,14 @@ jobs:
         shell: powershell
         run: |
           Import-Module Pester -MinimumVersion 5.0 -MaximumVersion 5.99.99 -Force
-          "using Pester $((Get-Module Pester).Version)"
-          $r = Invoke-Pester -Path tests -PassThru
+          "using Pester $((Get-Module Pester).Version) on PS $($PSVersionTable.PSVersion)"
+          "ANSI codepage: $([System.Text.Encoding]::Default.WebName)"
+          $r = Invoke-Pester -Path tests -PassThru -Output Detailed
           "passed=$($r.PassedCount) failed=$($r.FailedCount)"
+          foreach ($t in $r.Failed) {
+            "FAILED: $($t.ExpandedPath)"
+            "        $($t.ErrorRecord)"
+          }
           if ($r.FailedCount -gt 0) { exit 1 }
 
       - name: Pester (PowerShell 7)
@@ -41,9 +46,14 @@ jobs:
           Install-Module Pester -MinimumVersion 5.0 -MaximumVersion 5.99.99 `
                          -Force -SkipPublisherCheck -Scope CurrentUser
           Import-Module Pester -MinimumVersion 5.0 -MaximumVersion 5.99.99 -Force
-          "using Pester $((Get-Module Pester).Version)"
-          $r = Invoke-Pester -Path tests -PassThru
+          "using Pester $((Get-Module Pester).Version) on PS $($PSVersionTable.PSVersion)"
+          "ANSI codepage: $([System.Text.Encoding]::Default.WebName)"
+          $r = Invoke-Pester -Path tests -PassThru -Output Detailed
           "passed=$($r.PassedCount) failed=$($r.FailedCount)"
+          foreach ($t in $r.Failed) {
+            "FAILED: $($t.ExpandedPath)"
+            "        $($t.ErrorRecord)"
+          }
           if ($r.FailedCount -gt 0) { exit 1 }
 
       # No Adobe software on the runner. That is the point -- every app interaction
