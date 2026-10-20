@@ -8,6 +8,8 @@
     PowerShellVersion = '5.1'
     FunctionsToExport = @(
         'Invoke-AdobeScript'
+        'Invoke-DirectAfterEffects'
+        'Test-DirectTransportReady'
         'Get-AdobeTarget'
         'Resolve-BridgeHost'
         'Test-ComResponds'

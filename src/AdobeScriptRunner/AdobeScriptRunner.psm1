@@ -148,6 +148,53 @@ function Find-AdobeExecutable {
 }
 
 
+function Test-DirectTransportReady {
+    <#
+    .SYNOPSIS
+        Reasons the direct transport cannot be used right now. Empty list means go.
+    .DESCRIPTION
+        The direct transport is `AfterFX.exe -r job.jsx`: After Effects runs the
+        script at startup, with no Photoshop, no BridgeTalk and no COM. Its reason
+        to exist is that the relay refuses an After Effects job while Premiere is
+        open (trap 2), and this path has no such ambiguity.
+
+        Two things stop it.
+
+        **After Effects is already running.** `-r` is a startup argument. Handing it
+        to a second launch is not a documented way to drive a running instance, and
+        when we tried it against an instance sitting on the crash-recovery dialog
+        the job vanished without a word. Use the relay for a running After Effects;
+        it is designed to talk to one.
+
+        **No AfterFX.exe.** Nothing to launch.
+    .PARAMETER Executable
+        Path to AfterFX.exe, or $null. Injectable for tests.
+    .PARAMETER RunningProcesses
+        Process names currently running. Injectable for tests.
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()][string]$Executable,
+        [string[]]$RunningProcesses
+    )
+    if ($null -eq $RunningProcesses) {
+        $RunningProcesses = @(Get-Process -ErrorAction SilentlyContinue | ForEach-Object ProcessName)
+    }
+    $problems = @()
+    if (-not $Executable) {
+        $problems += 'AfterFX.exe was not found. Pass -Executable, or use -Transport relay.'
+    }
+    if ($RunningProcesses -contains 'AfterFX') {
+        $problems += @(
+            'After Effects is already running, and "-r" is a startup argument: a second'
+            'launch may never run the job. Use -Transport relay to talk to the running'
+            'instance, or close After Effects.'
+        ) -join ' '
+    }
+    , $problems
+}
+
+
 function Test-RunnerPreflight {
     <#
     .SYNOPSIS
@@ -302,7 +349,8 @@ function Invoke-AdobeScript {
         [Parameter(Mandatory)][string]$WorkDir,
         [int]$TimeoutSec = 300,
         [string]$Marker = 'VERDICT',
-        [switch]$SkipPreflight
+        [switch]$SkipPreflight,
+        [ValidateSet('relay', 'direct')][string]$Transport = 'relay'
     )
 
     if (-not (Test-Path $JobPath)) { throw "Job not found: $JobPath" }
@@ -310,6 +358,15 @@ function Invoke-AdobeScript {
     $JobPath = (Resolve-Path $JobPath).Path
     $WorkDir = (Resolve-Path $WorkDir).Path
     $target  = Get-AdobeTarget -App $App
+
+    if ($Transport -eq 'direct') {
+        if ($App -ne 'aftereffects') {
+            throw "The direct transport is After Effects only ('-r' is its startup argument); $App has no equivalent. Use -Transport relay."
+        }
+        return Invoke-DirectAfterEffects -JobPath $JobPath -WorkDir $WorkDir `
+                                         -TimeoutSec $TimeoutSec -Marker $Marker `
+                                         -SkipPreflight:$SkipPreflight
+    }
 
     if (-not $SkipPreflight) {
         foreach ($problem in (Test-RunnerPreflight -App $App)) { throw $problem }
@@ -373,8 +430,70 @@ function Invoke-AdobeScript {
 }
 
 
+function Invoke-DirectAfterEffects {
+    <#
+    .SYNOPSIS
+        Run a job by starting After Effects with "-r", bypassing BridgeTalk.
+    .DESCRIPTION
+        Same contract as the relay path: the job writes one VERDICT line, the runner
+        reads it and nothing else. `-r` discards the return value, so direct.jsx
+        catches it and writes _result.txt; this function waits for that file.
+
+        There is no COM call to wedge here, so no background job is needed -- we
+        poll for the result file and give up at the timeout.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$JobPath,
+        [Parameter(Mandatory)][string]$WorkDir,
+        [int]$TimeoutSec = 300,
+        [string]$Marker = 'VERDICT',
+        [switch]$SkipPreflight,
+        [string]$Executable
+    )
+
+    if (-not $Executable) { $Executable = Find-AdobeExecutable -FileName 'AfterFX.exe' }
+    if (-not $SkipPreflight) {
+        foreach ($problem in (Test-DirectTransportReady -Executable $Executable)) { throw $problem }
+    }
+    if (-not $Executable) { throw 'AfterFX.exe was not found.' }
+
+    $resultFile = Join-Path $WorkDir '_result.txt'
+    Remove-Item $resultFile -Force -ErrorAction SilentlyContinue
+    Write-JobPointer -WorkDir $WorkDir -JobPath $JobPath | Out-Null
+    $wrapper = Join-Path $WorkDir 'direct.jsx'
+    Copy-Item (Join-Path $PSScriptRoot 'direct.jsx') $wrapper -Force
+
+    $started = Get-Date
+    Start-Process -FilePath $Executable -ArgumentList @('-r', $wrapper) | Out-Null
+    $deadline = $started.AddSeconds($TimeoutSec)
+    while (-not (Test-Path $resultFile) -and (Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 500
+    }
+    $elapsed  = [math]::Round(((Get-Date) - $started).TotalSeconds, 1)
+    $timedOut = -not (Test-Path $resultFile)
+
+    $logText = ''
+    if (-not $timedOut) { $logText = Get-Content $resultFile -Raw -Encoding UTF8 }
+
+    $verdict = Read-Verdict -Text $logText -Marker $Marker
+    [pscustomobject]@{
+        App        = 'aftereffects'
+        Passed     = (-not $timedOut) -and (Test-VerdictPassed $verdict)
+        Verdict    = $verdict
+        TimedOut   = $timedOut
+        Elapsed    = $elapsed
+        Relay      = 'none (direct -r)'
+        Output     = $logText
+        ResultFile = $resultFile
+    }
+}
+
+
 Export-ModuleMember -Function @(
     'Invoke-AdobeScript'
+    'Invoke-DirectAfterEffects'
+    'Test-DirectTransportReady'
     'Get-AdobeTarget'
     'Resolve-BridgeHost'
     'Test-ComResponds'

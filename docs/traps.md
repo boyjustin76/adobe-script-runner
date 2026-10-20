@@ -78,6 +78,19 @@ the wrong window once and brought a different application to the front; a tool t
 moves the mouse on somebody's desktop has to be right every time, and this one
 cannot be.
 
+**The half that is easy to miss: you create this dialog yourself.** Every force-kill
+buys a blocked run later. A session that killed After Effects between jobs — to be
+sure the next one started clean — spent the following hour unable to run a single
+script, including scripts that had worked twenty minutes earlier. Let the job quit
+the app (`app.quit()`); the direct transport's wrapper does exactly that, after the
+result is on disk.
+
+**How to tell this apart from a broken script, in one command:** run `aerender` on
+any project. It spawns its own After Effects and is untouched by the dialog, so
+`aerender` finishing normally while every scripting path is silent places the fault
+in the UI layer, not in your job. That one check replaced a long detour into
+syntax-checking a script that was fine.
+
 ## 6. A return value is not proof of success
 
 **Symptom:** a job "passes" and nothing happened.
@@ -140,3 +153,63 @@ non-ASCII characters — which, outside the English-speaking world, they do.
 
 `"C:\temp\new.jsx"` in a JavaScript string literal contains a tab and a newline.
 ExtendScript accepts forward slashes on Windows. Convert once, at the boundary.
+
+## 12. `saveFrameToPng` will not overwrite, and will not tell you
+
+**Symptom:** you change the project, re-run, and the stills look identical. So you
+change something bigger. Still identical.
+
+**Cause:** the file already exists. `saveFrameToPng` does not overwrite it, does not
+throw, and returns nothing to check.
+
+**How it was proved:** four rounds of "the change isn't landing" ended with a
+pixel-level diff of the first and fourth contact sheets. `ImageChops.difference`
+returned a bounding box of `None` — not similar, *identical*. The files had not been
+written since the first run; every judgement in between was made on a stale image.
+
+**Fix:** delete the target first, then assert the file exists and is non-empty after
+the call. An output step that cannot fail loudly will fail quietly instead.
+
+## 13. Under `-r`, After Effects renders nothing — silently
+
+The direct transport (`AfterFX.exe -r job.jsx`) runs scripts fine, but
+`saveFrameToPng` writes **no file at all** and raises nothing.
+
+Measured on the same script and the same project: through the relay, 10 of 10 comps
+produced a still; through `-r`, 0 of 10, with the instrumentation reporting the
+files simply absent.
+
+**Fix:** keep `-r` for scripted edits, and render frames with **`aerender`**, the
+supported headless renderer — about 13 s per frame cold, and it runs happily while
+somebody is using Premiere. Note that `aerender` ignores the extension on `-output`
+unless an output-module template matches: asking for `scene.png` yields `scene.mp4`
+on a default install. Either add a PNG output-module template, or render one frame
+to video and pull the frame out.
+
+## 14. `toComp()` is an expression method, not a scripting one
+
+`layer.toComp([x, y], t)` is in every expression reference. Call it from
+ExtendScript and you get *"function is not defined"*.
+
+This matters because a **parented** layer's `position` is in its parent's
+coordinates. Compute a comp-space rectangle from `position`/`anchorPoint`/`scale`
+without folding the parent chain and plainly visible elements come back off-screen —
+in our project, an avatar sitting mid-frame reported a centre of `(432, −317)`.
+
+**Fix:** walk the chain yourself — apply the layer's own transform, then recurse into
+`layer.parent` until there is none. About fifteen lines, and the only way to get a
+true on-screen rectangle from a script.
+
+## 15. A job that changes state must not decide from that state
+
+**Symptom:** a re-run of a job that had been correct produced nonsense, and the log
+showed source values that existed nowhere in the original file.
+
+**Cause:** an earlier experiment had written throwaway values into the project. The
+job classified each colour by reading the project's *current* value, so on the next
+run it classified the throwaway values and mis-assigned all 124 of them.
+
+**Fix:** write the reference values to a file **before** the first mutation, and have
+the job read its decisions from that file. The job then produces the same result no
+matter how many times it has already run — which is also what makes it safe to
+iterate on.

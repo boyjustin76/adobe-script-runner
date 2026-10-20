@@ -162,3 +162,84 @@ Describe 'Write-JobPointer' {
             Should -Be "C:/$nonAscii/build.jsx"
     }
 }
+
+Describe 'Test-DirectTransportReady' {
+    It 'passes when After Effects is installed and not running' {
+        $problems = Test-DirectTransportReady -Executable 'C:/AE/AfterFX.exe' `
+                                              -RunningProcesses @('explorer', 'pwsh')
+        $problems.Count | Should -Be 0
+    }
+    It 'refuses when After Effects is already running' {
+        # "-r" is a startup argument. Against an instance that was sitting on the
+        # crash-recovery dialog, the job vanished with no error and no result file,
+        # and the caller burned its whole timeout. The relay is the path for a
+        # running After Effects.
+        $problems = Test-DirectTransportReady -Executable 'C:/AE/AfterFX.exe' `
+                                              -RunningProcesses @('AfterFX')
+        $problems.Count | Should -Be 1
+        $problems[0] | Should -Match 'already running'
+        $problems[0] | Should -Match 'relay'
+    }
+    It 'refuses when there is no AfterFX.exe to launch' {
+        $problems = Test-DirectTransportReady -Executable $null -RunningProcesses @()
+        $problems.Count | Should -Be 1
+        $problems[0] | Should -Match 'not found'
+    }
+    It 'reports both problems at once rather than the first one' {
+        $problems = Test-DirectTransportReady -Executable $null -RunningProcesses @('AfterFX')
+        $problems.Count | Should -Be 2
+    }
+}
+
+Describe 'Invoke-AdobeScript -Transport direct' {
+    BeforeAll {
+        $dir = Join-Path $TestDrive 'direct'
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        $job = Join-Path $dir 'job.jsx'
+        Set-Content -Path $job -Value '(function(){ return "VERDICT: OK"; })();' -Encoding UTF8
+    }
+    It 'refuses a target that has no "-r"' {
+        # Premiere has no equivalent. Quietly falling back to the relay would hide
+        # which transport ran, and the two fail in different ways.
+        { Invoke-AdobeScript -App premiere -JobPath $job -WorkDir $dir -Transport direct } |
+            Should -Throw -ExpectedMessage '*After Effects only*'
+    }
+    It 'rejects a transport name that is not one of the two' {
+        { Invoke-AdobeScript -App aftereffects -JobPath $job -WorkDir $dir -Transport carrier } |
+            Should -Throw
+    }
+    It 'still defaults to the relay' {
+        # Changing the default would quietly change which failures a caller gets.
+        # Opting in is the point.
+        $param = (Get-Command Invoke-AdobeScript).ScriptBlock.Ast.Body.ParamBlock.Parameters |
+            Where-Object { $_.Name.VariablePath.UserPath -eq 'Transport' }
+        $param.DefaultValue.Value | Should -Be 'relay'
+    }
+}
+
+Describe 'direct.jsx' {
+    BeforeAll {
+        # Windows PowerShell 5.1's Join-Path takes two paths, not a list.
+        $wrapper = Join-Path $PSScriptRoot '..\src\AdobeScriptRunner\direct.jsx'
+        $text = Get-Content $wrapper -Raw -Encoding UTF8
+    }
+    It 'sits beside the module, where Invoke-DirectAfterEffects copies it from' {
+        Test-Path $wrapper | Should -BeTrue
+    }
+    It 'sets ASR_WORKDIR before running the job' {
+        # Same contract as the relay, and it is also how a job knows not to quit the
+        # app itself. A job that quits first leaves no verdict behind.
+        $text | Should -Match 'ASR_WORKDIR'
+    }
+    It 'writes the result before it quits' {
+        $write = $text.IndexOf('_result.txt')
+        $quit  = $text.IndexOf('app.quit')
+        $write | Should -BeGreaterThan 0
+        $quit  | Should -BeGreaterThan $write
+    }
+    It 'catches a throw from the job instead of losing the run' {
+        # "-r" discards the return value, so an uncaught throw leaves no trace at
+        # all: no verdict, no result file, nothing to read.
+        $text | Should -Match 'JOBERR'
+    }
+}
