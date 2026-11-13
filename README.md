@@ -212,3 +212,17 @@ trap: a failure that looked like success, with how you proved what it actually w
 MIT — see [LICENSE](LICENSE).
 
 한국어 설명은 [README.ko.md](README.ko.md).
+
+## Launching from agent shells / CI
+
+Before COM activation or job submission, the runner checks the caller, target and relay for `CommonProgramFiles`, `CommonProgramFiles(x86)` and `CommonProgramW6432`. Missing variables raise `VERDICT: FAIL env-missing` with app, PID and missing names. Unreadable blocks raise `env-unreadable`. No job is sent; `-SkipPreflight` does not bypass this guard.
+
+```powershell
+.\scripts\Test-AgentEnv.ps1
+Import-Module .\src\AdobeScriptRunner
+Start-AdobeApp -App aftereffects -Version 2026
+```
+
+Or launch without importing the module using `scripts/launch-adobe-fullenv.ps1 -Exe '<executable path>'`. Use one launcher, then attach. Existing instances are refused, never closed. `OK started` proves process creation only, not scripting readiness. Use an x64 same-user shell. No GUI input or automatic elevation is performed.
+
+[Codex / agent setup (English and Korean)](docs/codex.md) includes the six-variable configuration, new-session requirement, environment A/B procedure and Windows compatibility limits. Copy the [AGENTS.md example](examples/AGENTS.md) into agent workspaces as appropriate.

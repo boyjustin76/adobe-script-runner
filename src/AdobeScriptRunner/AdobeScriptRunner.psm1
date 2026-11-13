@@ -13,6 +13,7 @@
 #>
 
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'Environment.ps1')
 
 # Apps that can host the relay, in preference order. Any Adobe app with a ProgID
 # will do -- BridgeTalk does not care who sends the message.
@@ -95,15 +96,19 @@ function Resolve-BridgeHost {
         [object[]]$Hosts = $script:BridgeHosts,
         [scriptblock]$TestCom,
         [scriptblock]$GetProcess,
+        [scriptblock]$TestEnvironment,
         [int]$LaunchTimeoutSec = 120,
         [switch]$NoLaunch
     )
 
     if (-not $TestCom)    { $TestCom    = { param($p) Test-ComResponds -ProgId $p } }
     if (-not $GetProcess) { $GetProcess = { param($n) Get-Process -Name $n -ErrorAction SilentlyContinue } }
+    if (-not $TestEnvironment) { $TestEnvironment = { param($p) Assert-AdobeEnvironment -ProcessId $p.Id -App $p.ProcessName } }
+    Assert-AdobeEnvironment
 
     foreach ($h in $Hosts) {
         $running = & $GetProcess $h.Process
+        foreach ($p in @($running)) { if ($p) { & $TestEnvironment $p } }
         if ($running -and (& $TestCom $h.ProgId)) {
             Write-Verbose "relay: $($h.Process) (already running)"
             return $h
@@ -114,10 +119,11 @@ function Resolve-BridgeHost {
     foreach ($h in $Hosts) {
         $exe = Find-AdobeExecutable -FileName $h.Exe
         if (-not $exe) { continue }
-        if (-not (& $GetProcess $h.Process)) { Start-Process $exe | Out-Null }
+        if (-not (& $GetProcess $h.Process)) { Start-AdobeApp -Exe $exe | Write-Verbose }
         $deadline = (Get-Date).AddSeconds($LaunchTimeoutSec)
         do {
             Start-Sleep -Seconds 3
+            foreach ($p in @(& $GetProcess $h.Process)) { if ($p) { & $TestEnvironment $p } }
             $ready = & $TestCom $h.ProgId
         } until ($ready -or (Get-Date) -gt $deadline)
         if ($ready) {
@@ -353,6 +359,13 @@ function Invoke-AdobeScript {
         [ValidateSet('relay', 'direct')][string]$Transport = 'relay'
     )
 
+    if ($Transport -eq 'direct' -and $App -ne 'aftereffects') {
+        throw 'The direct transport is After Effects only; use -Transport relay.'
+    }
+    # Mandatory even with -SkipPreflight: no COM activation, launch or job writes
+    # before the caller and existing target environments have been checked.
+    Assert-AdobeEnvironment
+    Assert-AdobeRunningEnvironment -ProcessName (Get-AdobeTarget -App $App).Process
     if (-not (Test-Path $JobPath)) { throw "Job not found: $JobPath" }
     if (-not (Test-Path $WorkDir)) { New-Item -ItemType Directory -Path $WorkDir | Out-Null }
     $JobPath = (Resolve-Path $JobPath).Path
@@ -393,13 +406,21 @@ function Invoke-AdobeScript {
     # Run in a background job so a hung app cannot hang this session. COM calls are
     # not cancellable: if the app wedges, the only exit is the timeout.
     $worker = {
-        param($progId, $scriptPath)
+        param($progId, $scriptPath, $modulePath, $targetProcess, $relayProcess)
+        Import-Module $modulePath -Force
+        & (Get-Module AdobeScriptRunner) {
+            param($targetName, $relayName)
+            Assert-AdobeEnvironment
+            Assert-AdobeRunningEnvironment -ProcessName $targetName
+            Assert-AdobeRunningEnvironment -ProcessName $relayName
+        } $targetProcess $relayProcess
         $app = New-Object -ComObject $progId
         if ($progId -like 'Photoshop*') { $app.DisplayDialogs = 3 }   # psDisplayNoDialogs
         [pscustomobject]@{ Version = $app.Version; Result = $app.DoJavaScriptFile($scriptPath) }
     }
     $started = Get-Date
-    $handle = Start-Job -ScriptBlock $worker -ArgumentList @($relay.ProgId, $scriptToRun)
+    Assert-AdobeRunningEnvironment -ProcessName $relay.Process
+    $handle = Start-Job -ScriptBlock $worker -ArgumentList @($relay.ProgId, $scriptToRun, (Join-Path $PSScriptRoot 'AdobeScriptRunner.psd1'), $target.Process, $relay.Process)
     $finished = Wait-Job $handle -Timeout $TimeoutSec
     # Measure here. Remove-Job -Force waits on a COM-blocked job -- we have seen a
     # 45-second limit produce a 165-second wall clock.
@@ -452,6 +473,8 @@ function Invoke-DirectAfterEffects {
         [string]$Executable
     )
 
+    Assert-AdobeEnvironment
+    Assert-AdobeRunningEnvironment -ProcessName 'AfterFX'
     if (-not $Executable) { $Executable = Find-AdobeExecutable -FileName 'AfterFX.exe' }
     if (-not $SkipPreflight) {
         foreach ($problem in (Test-DirectTransportReady -Executable $Executable)) { throw $problem }
@@ -465,7 +488,7 @@ function Invoke-DirectAfterEffects {
     Copy-Item (Join-Path $PSScriptRoot 'direct.jsx') $wrapper -Force
 
     $started = Get-Date
-    Start-Process -FilePath $Executable -ArgumentList @('-r', $wrapper) | Out-Null
+    Start-AdobeApp -Exe $Executable -Arguments @('-r', $wrapper) | Write-Verbose
     $deadline = $started.AddSeconds($TimeoutSec)
     while (-not (Test-Path $resultFile) -and (Get-Date) -lt $deadline) {
         Start-Sleep -Milliseconds 500
@@ -491,6 +514,9 @@ function Invoke-DirectAfterEffects {
 
 
 Export-ModuleMember -Function @(
+    'Start-AdobeApp'
+    'Test-AdobeEnvironment'
+    'Get-AdobeProcessEnvironment'
     'Invoke-AdobeScript'
     'Invoke-DirectAfterEffects'
     'Test-DirectTransportReady'

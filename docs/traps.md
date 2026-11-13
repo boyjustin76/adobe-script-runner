@@ -213,3 +213,13 @@ run it classified the throwaway values and mis-assigned all 124 of them.
 the job read its decisions from that file. The job then produces the same result no
 matter how many times it has already run — which is also what makes it safe to
 iterate on.
+
+## 16. A filtered launch environment can look like a broken installation
+
+**Observed on Windows, November 2026:** After Effects reported that the CEP suite could not be loaded, then a preferences-folder permission error. CEP logs ended with an empty `ERROR PlugPlugSetup:`. Other Adobe hosts showed the same initialization error without necessarily quitting.
+
+**Comparison:** the agent-launched processes lacked three CommonProgramFiles variables that were present in a normally launched process. In the reported Illustrator A/B test, the full environment initialized CEP; removing the three variables reproduced PlugPlugSetup. Relaunching After Effects 26.5 with a restored environment removed the startup error and a read-only script returned `VERDICT: OK`. See the follow-up evidence in [issue #1](https://github.com/boyjustin76/adobe-script-runner/issues/1). This is evidence for that case, not a claim that every CEP or non-Adobe launch failure shares the cause.
+
+**Guard:** inspect caller and running target/relay environment blocks before COM activation or job submission. Fail on missing variables, and fail separately when inspection is unavailable. Restore the environment with the standalone launcher or Start-AdobeApp, then attach. Existing processes retain their original environment; changing the agent config does not repair them. A script file-write permission is a separate application setting.
+
+The reader uses private Windows x64 PEB offsets. Microsoft warns that these structures can change; unsupported or unreadable targets fail closed. No environment values are included in verdicts. Real-process tests use a native dummy with all three variables removed via an explicit CreateProcess environment block. Removing only CommonProgramFiles while leaving its related variables present did not preserve that omission in this test environment; do not confuse this fixture behavior with a successful missing-variable test.
