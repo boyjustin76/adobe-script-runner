@@ -408,12 +408,18 @@ function Invoke-AdobeScript {
     $worker = {
         param($progId, $scriptPath, $modulePath, $targetProcess, $relayProcess)
         Import-Module $modulePath -Force
-        & (Get-Module AdobeScriptRunner) {
-            param($targetName, $relayName)
-            Assert-AdobeEnvironment
-            Assert-AdobeRunningEnvironment -ProcessName $targetName
-            Assert-AdobeRunningEnvironment -ProcessName $relayName
-        } $targetProcess $relayProcess
+        try {
+            & (Get-Module AdobeScriptRunner) {
+                param($targetName, $relayName)
+                Assert-AdobeEnvironment
+                Assert-AdobeRunningEnvironment -ProcessName $targetName
+                Assert-AdobeRunningEnvironment -ProcessName $relayName
+            } $targetProcess $relayProcess
+        } catch {
+            # Preserve the environment verdict if the process changed between
+            # parent preflight and worker dispatch; do not lose it in job errors.
+            return [pscustomobject]@{Version='';Result=$_.Exception.Message}
+        }
         $app = New-Object -ComObject $progId
         if ($progId -like 'Photoshop*') { $app.DisplayDialogs = 3 }   # psDisplayNoDialogs
         [pscustomobject]@{ Version = $app.Version; Result = $app.DoJavaScriptFile($scriptPath) }
