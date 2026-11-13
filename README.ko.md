@@ -132,3 +132,17 @@ Import-Module .\adobe-script-runner\src\AdobeScriptRunner
 ## 라이선스
 
 MIT — [LICENSE](LICENSE)
+
+## 에이전트 셸·CI에서 실행하기
+
+COM 확인·작업 전송 전에 호출 셸과 대상·중계 프로세스의 `CommonProgramFiles`, `CommonProgramFiles(x86)`, `CommonProgramW6432`를 검사합니다. 누락 시 `VERDICT: FAIL env-missing`과 앱·PID·누락 이름을 표시하고 작업을 보내지 않습니다. 읽지 못하면 `env-unreadable`로 중단합니다. `-SkipPreflight`로도 이 검사는 생략되지 않습니다.
+
+```powershell
+.\scripts\Test-AgentEnv.ps1
+Import-Module .\src\AdobeScriptRunner
+Start-AdobeApp -App aftereffects -Version 2026
+```
+
+모듈 없이 `scripts/launch-adobe-fullenv.ps1 -Exe '<실행 파일 경로>'`도 쓸 수 있습니다. 실행기 하나로 먼저 띄운 뒤 붙으세요. 기존 앱이 있으면 새로 띄우지 않으며 기존 앱을 닫지도 않습니다. `OK started`는 프로세스 생성 확인일 뿐 작업 성공은 아닙니다. 화면 입력·자동 권한 상승은 하지 않습니다.
+
+설정·새 세션 적용·환경 A/B 비교·x64 제한은 [Codex 안내](docs/codex.md), 에이전트 지침은 [AGENTS.md 예시](examples/AGENTS.md)를 참고하세요.
