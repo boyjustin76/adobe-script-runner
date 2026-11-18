@@ -44,6 +44,16 @@
     function trim(s) { return String(s).replace(/^\s+|\s+$/g, ""); }
 
     var result = "VERDICT: FAIL direct wrapper did not run";
+
+    /*  -NewInstance: the runner started a separate After Effects ('-m') and handed
+        it a one-time token. If the token is missing or different, this script landed
+        in somebody else's After Effects. Touch nothing, quit nothing; say so.  */
+    var expected = trim(read(here + "/_token.txt"));
+    if (expected && trim($.getenv("ASR_INSTANCE_TOKEN") || "") !== expected) {
+        try { write(here + "/_result.txt", "VERDICT: FAIL wrong-instance: job reached an After Effects this runner did not start; nothing was done"); } catch (e0) {}
+        return;
+    }
+
     try {
         var jobPath = trim(read(here + "/_job.txt"));
         if (!jobPath) {

@@ -181,7 +181,9 @@ function Test-DirectTransportReady {
     [CmdletBinding()]
     param(
         [AllowNull()][string]$Executable,
-        [string[]]$RunningProcesses
+        [string[]]$RunningProcesses,
+        # Start a separate After Effects with '-m' instead: a running instance no longer matters.
+        [switch]$NewInstance
     )
     if ($null -eq $RunningProcesses) {
         $RunningProcesses = @(Get-Process -ErrorAction SilentlyContinue | ForEach-Object ProcessName)
@@ -190,7 +192,7 @@ function Test-DirectTransportReady {
     if (-not $Executable) {
         $problems += 'AfterFX.exe was not found. Pass -Executable, or use -Transport relay.'
     }
-    if ($RunningProcesses -contains 'AfterFX') {
+    if (-not $NewInstance -and $RunningProcesses -contains 'AfterFX') {
         $problems += @(
             'After Effects is already running, and "-r" is a startup argument: a second'
             'launch may never run the job. Use -Transport relay to talk to the running'
@@ -356,8 +358,13 @@ function Invoke-AdobeScript {
         [int]$TimeoutSec = 300,
         [string]$Marker = 'VERDICT',
         [switch]$SkipPreflight,
-        [ValidateSet('relay', 'direct')][string]$Transport = 'relay'
+        [ValidateSet('relay', 'direct')][string]$Transport = 'relay',
+        # direct only: run in a new After Effects of its own ('-m'), beside one already open.
+        [switch]$NewInstance
     )
+    if ($NewInstance -and $Transport -ne 'direct') {
+        throw '-NewInstance needs -Transport direct.'
+    }
 
     if ($Transport -eq 'direct' -and $App -ne 'aftereffects') {
         throw 'The direct transport is After Effects only; use -Transport relay.'
@@ -378,7 +385,7 @@ function Invoke-AdobeScript {
         }
         return Invoke-DirectAfterEffects -JobPath $JobPath -WorkDir $WorkDir `
                                          -TimeoutSec $TimeoutSec -Marker $Marker `
-                                         -SkipPreflight:$SkipPreflight
+                                         -SkipPreflight:$SkipPreflight -NewInstance:$NewInstance
     }
 
     if (-not $SkipPreflight) {
@@ -476,14 +483,19 @@ function Invoke-DirectAfterEffects {
         [int]$TimeoutSec = 300,
         [string]$Marker = 'VERDICT',
         [switch]$SkipPreflight,
-        [string]$Executable
+        [string]$Executable,
+        # Run the job in its own new After Effects ('AfterFX.exe -m -r'), beside any
+        # After Effects already open. Each call gets a one-time token; direct.jsx only
+        # works and quits when the token matches, so a job that lands in somebody
+        # else's After Effects does nothing and quits nothing.
+        [switch]$NewInstance
     )
 
     Assert-AdobeEnvironment
     Assert-AdobeRunningEnvironment -ProcessName 'AfterFX'
     if (-not $Executable) { $Executable = Find-AdobeExecutable -FileName 'AfterFX.exe' }
     if (-not $SkipPreflight) {
-        foreach ($problem in (Test-DirectTransportReady -Executable $Executable)) { throw $problem }
+        foreach ($problem in (Test-DirectTransportReady -Executable $Executable -NewInstance:$NewInstance)) { throw $problem }
     }
     if (-not $Executable) { throw 'AfterFX.exe was not found.' }
 
@@ -492,9 +504,17 @@ function Invoke-DirectAfterEffects {
     Write-JobPointer -WorkDir $WorkDir -JobPath $JobPath | Out-Null
     $wrapper = Join-Path $WorkDir 'direct.jsx'
     Copy-Item (Join-Path $PSScriptRoot 'direct.jsx') $wrapper -Force
+    $tokenFile = Join-Path $WorkDir '_token.txt'
+    Remove-Item $tokenFile -Force -ErrorAction SilentlyContinue
 
     $started = Get-Date
-    Start-AdobeApp -Exe $Executable -Arguments @('-r', $wrapper) | Write-Verbose
+    if ($NewInstance) {
+        $token = [guid]::NewGuid().ToString('N')
+        [IO.File]::WriteAllText($tokenFile, $token, (New-Object Text.UTF8Encoding $false))
+        Start-AdobeApp -Exe $Executable -Arguments @('-m', '-r', $wrapper) -Token $token | Write-Verbose
+    } else {
+        Start-AdobeApp -Exe $Executable -Arguments @('-r', $wrapper) | Write-Verbose
+    }
     $deadline = $started.AddSeconds($TimeoutSec)
     while (-not (Test-Path $resultFile) -and (Get-Date) -lt $deadline) {
         Start-Sleep -Milliseconds 500
@@ -512,7 +532,7 @@ function Invoke-DirectAfterEffects {
         Verdict    = $verdict
         TimedOut   = $timedOut
         Elapsed    = $elapsed
-        Relay      = 'none (direct -r)'
+        Relay      = $(if ($NewInstance) { 'none (direct -m -r, own instance)' } else { 'none (direct -r)' })
         Output     = $logText
         ResultFile = $resultFile
     }
