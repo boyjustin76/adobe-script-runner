@@ -63,6 +63,7 @@ Describe 'Test-VerdictPassed' {
 }
 
 Describe 'Resolve-BridgeHost' {
+    BeforeEach { Mock Assert-AdobeEnvironment {} -ModuleName AdobeScriptRunner }
     BeforeAll {
         # Pester 5+ does not carry Describe-scope variables into It blocks.
         $hosts = @(
@@ -72,7 +73,7 @@ Describe 'Resolve-BridgeHost' {
     }
 
     It 'prefers a relay that is running and answering' {
-        $relay = Resolve-BridgeHost -Hosts $hosts -NoLaunch `
+        $relay = Resolve-BridgeHost -Hosts $hosts -NoLaunch -TestEnvironment {} `
             -GetProcess { param($n) @{ Name = $n } } `
             -TestCom    { param($p) $true }
         $relay.Process | Should -Be 'Photoshop'
@@ -82,7 +83,7 @@ Describe 'Resolve-BridgeHost' {
         # Measured: Photoshop sat on a "scratch disks are full" dialog with the disk
         # 95% full. The process existed; COM never replied. Illustrator relayed the
         # same message in 18 seconds.
-        $relay = Resolve-BridgeHost -Hosts $hosts -NoLaunch `
+        $relay = Resolve-BridgeHost -Hosts $hosts -NoLaunch -TestEnvironment {} `
             -GetProcess { param($n) @{ Name = $n } } `
             -TestCom    { param($p) $p -eq 'Illustrator.Application' }
         $relay.Process | Should -Be 'Illustrator'
@@ -91,14 +92,14 @@ Describe 'Resolve-BridgeHost' {
     It 'does not treat a running process as proof on its own' {
         # A closing window still answers Get-Process for a while after it has
         # stopped serving COM.
-        $relay = Resolve-BridgeHost -Hosts $hosts -NoLaunch `
+        $relay = Resolve-BridgeHost -Hosts $hosts -NoLaunch -TestEnvironment {} `
             -GetProcess { param($n) @{ Name = $n } } `
             -TestCom    { param($p) $false }
         $relay | Should -BeNullOrEmpty
     }
 
     It 'returns nothing rather than launching when told not to launch' {
-        Resolve-BridgeHost -Hosts $hosts -NoLaunch `
+        Resolve-BridgeHost -Hosts $hosts -NoLaunch -TestEnvironment {} `
             -GetProcess { param($n) $null } `
             -TestCom    { param($p) $false } | Should -BeNullOrEmpty
     }

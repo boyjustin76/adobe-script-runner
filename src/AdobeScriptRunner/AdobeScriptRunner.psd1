@@ -7,6 +7,9 @@
     Description       = 'Run ExtendScript inside Adobe Premiere Pro or After Effects from PowerShell, by relaying through Photoshop over BridgeTalk.'
     PowerShellVersion = '5.1'
     FunctionsToExport = @(
+        'Start-AdobeApp'
+        'Test-AdobeEnvironment'
+        'Get-AdobeProcessEnvironment'
         'Invoke-AdobeScript'
         'Invoke-DirectAfterEffects'
         'Test-DirectTransportReady'
