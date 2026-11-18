@@ -190,6 +190,16 @@ Describe 'Test-DirectTransportReady' {
         $problems = Test-DirectTransportReady -Executable $null -RunningProcesses @('AfterFX')
         $problems.Count | Should -Be 2
     }
+    It 'lets -NewInstance run beside a running After Effects' {
+        # '-m' starts a separate instance (trap 18 covers sharing one project).
+        $problems = Test-DirectTransportReady -Executable 'C:/AE/AfterFX.exe' `
+                                              -RunningProcesses @('AfterFX') -NewInstance
+        $problems.Count | Should -Be 0
+    }
+    It 'still needs AfterFX.exe with -NewInstance' {
+        $problems = Test-DirectTransportReady -Executable $null -RunningProcesses @() -NewInstance
+        $problems.Count | Should -Be 1
+    }
 }
 
 Describe 'Invoke-AdobeScript -Transport direct' {

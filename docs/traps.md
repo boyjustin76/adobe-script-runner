@@ -223,3 +223,22 @@ iterate on.
 **Guard:** inspect caller and running target/relay environment blocks before COM activation or job submission. Fail on missing variables, and fail separately when inspection is unavailable. Restore the environment with the standalone launcher or Start-AdobeApp, then attach. Existing processes retain their original environment; changing the agent config does not repair them. A script file-write permission is a separate application setting.
 
 The reader uses private Windows x64 PEB offsets. Microsoft warns that these structures can change; unsupported or unreadable targets fail closed. No environment values are included in verdicts. Real-process tests use a native dummy with all three variables removed via an explicit CreateProcess environment block. Removing only CommonProgramFiles while leaving its related variables present did not preserve that omission in this test environment; do not confuse this fixture behavior with a successful missing-variable test.
+
+## 17. After Effects does not read a quoted switch
+
+**Observed on Windows, November 2026 (After Effects 26.5):** the launcher quoted every
+argument, so `AfterFX.exe "-m" "-r" "C:\work\direct.jsx"` was started. After Effects came
+up with no window, ran nothing, and sat there; the runner timed out with no verdict.
+The same launch with `-m -r C:\work\direct.jsx` ran the job in 8 seconds.
+
+**Fix:** quote a value only when it contains a space, tab or quote. Switches never do.
+
+## 18. Two After Effects on one project: the last save wins, silently
+
+**Observed November 2026:** two separate After Effects instances (`-m`) opened the same
+`.aep`, each added a composition and saved. Both reported success. Opening the file
+afterwards showed only one of the two compositions. After Effects does not lock a
+project file against another instance.
+
+**Fix:** run several After Effects at once only on *different* project files, and
+serialize work per project file (a lock keyed on the `.aep` path), not per application.

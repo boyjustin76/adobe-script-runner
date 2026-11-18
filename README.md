@@ -101,6 +101,23 @@ Two things to know before reaching for it.
 argument; handed to a second launch the job can vanish without a word. The runner
 checks and tells you to use the relay instead.
 
+**Unless it starts its own.** `-NewInstance` launches a separate After Effects with
+`-m` — the switch Media Encoder's Dynamic Link uses for its own background After
+Effects — and runs the job there, beside whatever is already open:
+
+```powershell
+Invoke-AdobeScript -App aftereffects -Transport direct -NewInstance `
+                   -JobPath .\job.jsx -WorkDir $wd
+```
+
+Measured on After Effects 26.5 with a person's After Effects open: two jobs started
+at once both passed (8.4 s and 11.9 s, 13.3 s together); four instances ran side by
+side earlier, about 1.2–1.8 GB each while working, and each quit itself. Each run gets
+a one-time token in its environment; `direct.jsx` only works and quits when the token
+matches, so a job that lands in somebody else's After Effects does nothing and quits
+nothing. The new instance shows a normal window while it works. Two instances on the
+**same** project file overwrite each other (trap 18): give each job its own `.aep`.
+
 **It cannot render frames.** `saveFrameToPng` writes nothing under `-r` and raises
 nothing — 0 of 10 comps, where the relay wrote 10 of 10. Use `aerender` for frames;
 it is the supported headless renderer and it too is happy while Premiere is open.

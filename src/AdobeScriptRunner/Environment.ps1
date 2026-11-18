@@ -49,7 +49,8 @@ function Start-AdobeApp {
         [ValidateSet('aftereffects','photoshop','illustrator','premiere','ame')][string]$App,
         [Parameter(ParameterSetName='App')][string]$Version,
         [Parameter(Mandatory,ParameterSetName='Exe')][string]$Exe,
-        [string[]]$Arguments
+        [string[]]$Arguments,
+        [string]$Token
     )
     if ($PSCmdlet.ParameterSetName -eq 'App') {
         $names=@{aftereffects='AfterFX.exe';photoshop='Photoshop.exe';illustrator='Illustrator.exe';premiere='Adobe Premiere Pro.exe';ame='Adobe Media Encoder.exe'}
@@ -69,6 +70,7 @@ function Start-AdobeApp {
         $quoted=@($Arguments | ForEach-Object { "'"+$_.Replace("'","''")+"'" })
         $command+=' -Arguments @('+($quoted -join ',')+')'
     }
+    if ($Token) { $command+=" -Token '"+$Token.Replace("'","''")+"'" }
     $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
     & $shell -NoProfile -NonInteractive -EncodedCommand $encoded
     if ($LASTEXITCODE -ne 0) { throw 'VERDICT: FAIL launch-failed; see launcher verdict.' }
