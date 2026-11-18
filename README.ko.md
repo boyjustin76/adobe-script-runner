@@ -138,6 +138,7 @@ MIT — [LICENSE](LICENSE)
 COM 확인·작업 전송 전에 호출 셸과 대상·중계 프로세스의 `CommonProgramFiles`, `CommonProgramFiles(x86)`, `CommonProgramW6432`를 검사합니다. 누락 시 `VERDICT: FAIL env-missing`과 앱·PID·누락 이름을 표시하고 작업을 보내지 않습니다. 읽지 못하면 `env-unreadable`로 중단합니다. `-SkipPreflight`로도 이 검사는 생략되지 않습니다.
 
 ```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned   # 이 셸에서만. Windows 기본값 Restricted면 .ps1·모듈이 막힘
 .\scripts\Test-AgentEnv.ps1
 Import-Module .\src\AdobeScriptRunner
 Start-AdobeApp -App aftereffects -Version 2026

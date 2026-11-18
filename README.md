@@ -218,6 +218,7 @@ MIT — see [LICENSE](LICENSE).
 Before COM activation or job submission, the runner checks the caller, target and relay for `CommonProgramFiles`, `CommonProgramFiles(x86)` and `CommonProgramW6432`. Missing variables raise `VERDICT: FAIL env-missing` with app, PID and missing names. Unreadable blocks raise `env-unreadable`. No job is sent; `-SkipPreflight` does not bypass this guard.
 
 ```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned   # this shell only; Windows client default is Restricted
 .\scripts\Test-AgentEnv.ps1
 Import-Module .\src\AdobeScriptRunner
 Start-AdobeApp -App aftereffects -Version 2026

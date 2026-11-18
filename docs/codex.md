@@ -7,6 +7,7 @@ Do not diagnose an installation or version problem before comparing the environm
 ## Launch, then attach
 
 ```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned   # this shell only; Windows client default is Restricted
 .\scripts\Test-AgentEnv.ps1
 .\scripts\launch-adobe-fullenv.ps1 -Exe 'C:\Program Files\Adobe\Adobe After Effects 2026\Support Files\AfterFX.exe'
 Import-Module .\src\AdobeScriptRunner\AdobeScriptRunner.psd1
