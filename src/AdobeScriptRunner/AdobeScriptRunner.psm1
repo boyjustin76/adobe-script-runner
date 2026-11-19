@@ -360,7 +360,10 @@ function Invoke-AdobeScript {
         [switch]$SkipPreflight,
         [ValidateSet('relay', 'direct')][string]$Transport = 'relay',
         # direct only: run in a new After Effects of its own ('-m'), beside one already open.
-        [switch]$NewInstance
+        [switch]$NewInstance,
+        # relay only: send the job only if the app that answers has a project open whose
+        # path contains this text. Guards against the message reaching another After Effects.
+        [string]$ExpectProject
     )
     if ($NewInstance -and $Transport -ne 'direct') {
         throw '-NewInstance needs -Transport direct.'
@@ -403,6 +406,12 @@ function Invoke-AdobeScript {
         $relay = Resolve-BridgeHost
         Write-JobPointer -WorkDir $WorkDir -JobPath $JobPath | Out-Null
         Set-Content -Path (Join-Path $WorkDir '_target.txt') -Value $target.BridgeTalkApp -Encoding UTF8
+        # bridge.jsx gives up by itself a little before we do, so the relay app is
+        # never left waiting inside our script (trap 19).
+        $utf8 = New-Object Text.UTF8Encoding $false
+        [IO.File]::WriteAllText((Join-Path $WorkDir '_limit.txt'), [string][math]::Max(5, $TimeoutSec - 10), $utf8)
+        Remove-Item (Join-Path $WorkDir '_expect.txt') -Force -ErrorAction SilentlyContinue
+        if ($ExpectProject) { [IO.File]::WriteAllText((Join-Path $WorkDir '_expect.txt'), $ExpectProject, $utf8) }
         # Run a copy of the relay script from the work directory, so that "the folder
         # I am in" tells bridge.jsx where to find _job.txt and where to leave the
         # result. DoJavaScriptFile cannot pass arguments.
