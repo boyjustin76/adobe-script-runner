@@ -70,21 +70,50 @@ if (!specifier) {
         ' var __r; try { __r = $.evalFile(new File("' + jobPath + '")); }' +
         ' catch (e) { __r = "JOBERR " + e.toString() + " @line " + e.line; } __r;';
 
-    var bt = new BridgeTalk();
-    bt.target = specifier;
-    bt.body = body;
+    /*  Two guards, both paid for (trap 19).
 
-    var answered = false;
-    var reply = "";
-    bt.onResult = function (message) { answered = true; reply = String(message.body); };
-    bt.onError = function (message) { answered = true; reply = "BTERROR " + String(message.body); };
-    bt.send();
+        A limit of our own. The loop below used to wait for ever, trusting BridgeTalk
+        to raise onError after about 70 seconds. One morning it did not, and the
+        relay app sat in this loop, "not responding", until somebody killed it.
 
-    /*  Pump the message loop until the target answers. BridgeTalk drops the
-        connection on its own after roughly 70 seconds if the target never replies,
-        at which point onError fires and we fall out of this loop.  */
-    while (!answered) { BridgeTalk.pump(); $.sleep(100); }
+        A check of who answers. With Media Encoder open there is a second After
+        Effects on the machine (its Dynamic Link helper), and "aftereffects" is a
+        name, not a process. If the runner wrote _expect.txt, ask the target which
+        project it has open first, and send the job only if the answer contains
+        that text.  */
+    function optional(path) { try { return trim(readFile(path)); } catch (e) { return ""; } }
+    var limitSec = Number(optional(workDir + "/_limit.txt")) || 120;
+    var expect = optional(workDir + "/_expect.txt");
+    var began = new Date().getTime();
 
+    function ask(text) {
+        var m = new BridgeTalk();
+        m.target = specifier;
+        m.body = text;
+        var done = false, out = "";
+        m.onResult = function (message) { done = true; out = String(message.body); };
+        m.onError = function (message) { done = true; out = "BTERROR " + String(message.body); };
+        m.send();
+        while (!done && (new Date().getTime() - began) < limitSec * 1000) { BridgeTalk.pump(); $.sleep(100); }
+        return done ? out : null;
+    }
+
+    var reply;
+    if (!BridgeTalk.isRunning(specifier)) {
+        reply = "VERDICT: FAIL relay: target not running: " + specifier;
+    } else {
+        var who = expect ? ask('var __p = ""; try { __p = app.project && app.project.file ? app.project.file.fsName : "(untitled)"; } catch (e) { __p = "(no project)"; } __p;') : "";
+        if (expect && who === null) {
+            reply = "VERDICT: FAIL RELAY_TIMEOUT " + limitSec + "s waiting for the target to say who it is (" + specifier + "); the job was not sent";
+        } else if (expect && String(who).toLowerCase().indexOf(expect.toLowerCase()) < 0) {
+            reply = "VERDICT: FAIL relay: wrong target. Expected a project matching '" + expect + "', the app that answered has '" + who + "'; the job was not sent";
+        } else {
+            reply = ask(body);
+            if (reply === null) {
+                reply = "VERDICT: FAIL RELAY_TIMEOUT " + limitSec + "s (" + specifier + "). The job may still run if the message arrives late: write jobs so that running twice is safe";
+            }
+        }
+    }
     writeFile(resultFile, reply);
     reply;
 }

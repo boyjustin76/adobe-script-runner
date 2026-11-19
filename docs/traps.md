@@ -242,3 +242,30 @@ project file against another instance.
 
 **Fix:** run several After Effects at once only on *different* project files, and
 serialize work per project file (a lock keyed on the `.aep` path), not per application.
+
+## 19. The relay can wait for ever, and take the relay app with it
+
+**Observed November 2026 (Photoshop 27 relaying to After Effects 26.5):** a job was sent
+through the relay and no reply ever came back. `bridge.jsx` waited in
+`while (!answered) { BridgeTalk.pump(); $.sleep(100); }`. The comment above that loop
+trusted BridgeTalk to raise an error after about 70 seconds; it did not. Photoshop was
+not broken, it was stuck inside our loop: "Not responding", and nothing short of ending
+the process got it back. A second relay app started on top of the stuck one died too.
+
+Where the message went was never established. An After Effects helper instance started
+by Media Encoder (`AfterFX.exe -m`) was running at the time and had started before the
+working After Effects; later attempts to reproduce the misdelivery with a helper present
+all reached the working instance (30 of 30).
+
+**Fix:**
+
+- `bridge.jsx` now carries its own time limit (`_limit.txt`, written by the runner a
+  little below `-TimeoutSec`) and returns `VERDICT: FAIL RELAY_TIMEOUT …` instead of
+  waiting. Measured: with After Effects busy for 40 seconds and a 15 second limit, the
+  relay came back in 15.7 seconds and Photoshop stayed responsive.
+- `-ExpectProject <text>` asks the target which project it has open before the job is
+  sent, and refuses with `wrong target` if the answer does not contain that text. A job
+  that would have run in the wrong application is not sent at all.
+- A timeout does not prove the job did not run: the message may arrive late. Write jobs
+  so that running twice is safe.
+- Do not stack a second transport on top of a stuck one. Clear the stuck state first.
