@@ -54,6 +54,11 @@
         return;
     }
 
+    /*  Startup is over once this line runs: After Effects has read its preferences.
+        The runner holds the start/stop gate until it sees this file (trap 20).  */
+    var gated = !!expected;
+    if (gated) { try { write(here + "/_started.txt", "1"); } catch (e1) {} }
+
     try {
         var jobPath = trim(read(here + "/_job.txt"));
         if (!jobPath) {
@@ -78,8 +83,39 @@
         result = "VERDICT: FAIL direct wrapper: " + e.toString();
     }
 
+    /*  A job that leaves unsaved changes makes After Effects ask "save changes?" on
+        the way out, and nobody is there to answer (trap 21). In an instance of our
+        own, say so in the result and drop the changes: saving is the job's business.  */
+    var discard = false;
+    if (gated) { try { discard = !!app.project.dirty; } catch (eD) {} }
+    if (discard) { result += "\nWARN unsaved-changes-discarded: the job left the project modified; closed without saving"; }
+
     try { write(here + "/_result.txt", result); } catch (e2) {}
 
-    /*  Quit, and quit politely. See the note at the top of this file. */
-    try { app.quit(); } catch (e3) {}
+    /*  Quitting rewrites the preferences folder, and every After Effects shares that
+        folder (trap 20). So an instance of ours does not quit until the runner,
+        holding the start/stop gate, says so by creating _quit_ok.txt. If the runner
+        has gone away, quit anyway after ten minutes rather than stay open for ever.
+
+        Wait with a scheduled task, not with a loop. A loop keeps this script alive,
+        After Effects puts up its "running script" window, and a quit called from
+        there closed the project, showed the Home screen and stopped: the process
+        stayed for ever and refused every polite request to close (2 instances in 8,
+        2026-11-19). With the wait moved to a scheduled task, 21 instances in 21 quit
+        by themselves the same day. Why the loop version stalled is still a guess.  */
+    function leave() {
+        if (discard) { try { app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES); } catch (eC) {} }
+        /*  Quit, and quit politely. See the note at the top of this file. */
+        try { app.quit(); } catch (e3) {}
+    }
+    if (!gated) { leave(); return; }
+
+    var askedAt = new Date().getTime();
+    $.global.__asrLeave = function () {
+        if ((new File(here + "/_quit_ok.txt")).exists || (new Date().getTime() - askedAt) > 600000) {
+            try { app.cancelTask($.global.__asrLeaveTask); } catch (eT) {}
+            leave();
+        }
+    };
+    $.global.__asrLeaveTask = app.scheduleTask("$.global.__asrLeave()", 500, true);
 })();

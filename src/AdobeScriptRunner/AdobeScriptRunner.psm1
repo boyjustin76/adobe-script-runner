@@ -497,7 +497,12 @@ function Invoke-DirectAfterEffects {
         # After Effects already open. Each call gets a one-time token; direct.jsx only
         # works and quits when the token matches, so a job that lands in somebody
         # else's After Effects does nothing and quits nothing.
-        [switch]$NewInstance
+        [switch]$NewInstance,
+        # -NewInstance only: how long to wait for the start/stop gate, for After
+        # Effects to finish starting, and for it to be gone after quitting.
+        [int]$GateTimeoutSec = 600,
+        [int]$StartTimeoutSec = 180,
+        [int]$QuitTimeoutSec = 120
     )
 
     Assert-AdobeEnvironment
@@ -516,20 +521,62 @@ function Invoke-DirectAfterEffects {
     $tokenFile = Join-Path $WorkDir '_token.txt'
     Remove-Item $tokenFile -Force -ErrorAction SilentlyContinue
 
+    $startedFile = Join-Path $WorkDir '_started.txt'
+    $quitFile    = Join-Path $WorkDir '_quit_ok.txt'
+    Remove-Item $startedFile, $quitFile -Force -ErrorAction SilentlyContinue
+    $gateWait = 0.0; $aePid = 0; $quitClean = $null
+
     $started = Get-Date
     if ($NewInstance) {
         $token = [guid]::NewGuid().ToString('N')
         [IO.File]::WriteAllText($tokenFile, $token, (New-Object Text.UTF8Encoding $false))
-        Start-AdobeApp -Exe $Executable -Arguments @('-m', '-r', $wrapper) -Token $token | Write-Verbose
+        # Start/stop gate (trap 20): one After Effects starts or quits at a time,
+        # machine-wide. The work between the two is not gated.
+        $gate = Enter-StartStopGate -TimeoutSec $GateTimeoutSec
+        $gateWait = [math]::Round(((Get-Date) - $started).TotalSeconds, 1)
+        try {
+            $launch = Start-AdobeApp -Exe $Executable -Arguments @('-m', '-r', $wrapper) -Token $token
+            $launch | Write-Verbose
+            if (([string]$launch) -match 'pid=(\d+)') { $aePid = [int]$Matches[1] }
+            $startDeadline = (Get-Date).AddSeconds([math]::Min($TimeoutSec, $StartTimeoutSec))
+            while (-not (Test-Path $startedFile) -and -not (Test-Path $resultFile) -and (Get-Date) -lt $startDeadline) {
+                Start-Sleep -Milliseconds 250
+            }
+        } finally { Exit-StartStopGate $gate }
     } else {
         Start-AdobeApp -Exe $Executable -Arguments @('-r', $wrapper) | Write-Verbose
     }
-    $deadline = $started.AddSeconds($TimeoutSec)
+    $deadline = $started.AddSeconds($TimeoutSec + $gateWait)
     while (-not (Test-Path $resultFile) -and (Get-Date) -lt $deadline) {
         Start-Sleep -Milliseconds 500
     }
     $elapsed  = [math]::Round(((Get-Date) - $started).TotalSeconds, 1)
     $timedOut = -not (Test-Path $resultFile)
+
+    if ($NewInstance -and -not $timedOut) {
+        # Let it quit, one at a time, and hold the gate until the process is gone:
+        # the preferences are written on the way out.
+        $gate = Enter-StartStopGate -TimeoutSec $GateTimeoutSec
+        try {
+            [IO.File]::WriteAllText($quitFile, '1', (New-Object Text.UTF8Encoding $false))
+            $quitClean = $false
+            if ($aePid) {
+                $quitDeadline = (Get-Date).AddSeconds($QuitTimeoutSec)
+                $nudgeAt = (Get-Date).AddSeconds(20); $nudged = $false
+                while ((Get-Process -Id $aePid -ErrorAction SilentlyContinue) -and (Get-Date) -lt $quitDeadline) {
+                    Start-Sleep -Milliseconds 250
+                    # app.quit() sometimes closes the project and leaves After Effects open
+                    # (seen once in three, 2026-11-19). Ask again the way the X button does.
+                    # Never kill: that is what trap 5 is about.
+                    if (-not $nudged -and (Get-Date) -gt $nudgeAt) {
+                        $nudged = $true
+                        try { [void](Get-Process -Id $aePid -ErrorAction Stop).CloseMainWindow() } catch { }
+                    }
+                }
+                $quitClean = -not (Get-Process -Id $aePid -ErrorAction SilentlyContinue)
+            }
+        } finally { Exit-StartStopGate $gate }
+    }
 
     $logText = ''
     if (-not $timedOut) { $logText = Get-Content $resultFile -Raw -Encoding UTF8 }
@@ -544,7 +591,46 @@ function Invoke-DirectAfterEffects {
         Relay      = $(if ($NewInstance) { 'none (direct -m -r, own instance)' } else { 'none (direct -r)' })
         Output     = $logText
         ResultFile = $resultFile
+        ProcessId  = $aePid
+        GateWait   = $gateWait
+        # $true: our After Effects is gone. $false: it was still there after
+        # -QuitTimeoutSec (look at the screen; never kill it). $null: not our instance.
+        QuitClean  = $quitClean
     }
+}
+
+
+function Enter-StartStopGate {
+    <#
+    .SYNOPSIS
+        Take the machine-wide "an After Effects is starting or quitting" gate.
+    .DESCRIPTION
+        A file opened with no sharing. Windows drops the handle when the holder
+        dies, so a crashed runner cannot leave the gate shut.
+    #>
+    [CmdletBinding()]
+    param([int]$TimeoutSec = 600, [string]$Path)
+    if (-not $Path) {
+        $dir = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'AdobeScriptRunner'
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        $Path = Join-Path $dir 'ae-startstop.gate'
+    }
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    while ($true) {
+        try {
+            return [IO.File]::Open($Path, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+        } catch [IO.IOException] {
+            if ((Get-Date) -gt $deadline) { throw "VERDICT: FAIL start-stop-gate busy for ${TimeoutSec}s ($Path)" }
+            Start-Sleep -Milliseconds 200
+        }
+    }
+}
+
+
+function Exit-StartStopGate {
+    [CmdletBinding()]
+    param([AllowNull()]$Gate)
+    if ($Gate) { try { $Gate.Dispose() } catch { } }
 }
 
 

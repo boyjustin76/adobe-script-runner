@@ -269,3 +269,57 @@ all reached the working instance (30 of 30).
 - A timeout does not prove the job did not run: the message may arrive late. Write jobs
   so that running twice is safe.
 - Do not stack a second transport on top of a stuck one. Clear the stuck state first.
+
+## 20. Every After Effects shares one preferences folder — and writes it more often than you think
+
+**Observed November 2026 (After Effects 26.5):** several `-NewInstance` jobs ran at once.
+One instance was quitting while another was starting; the starting one stopped on
+"error accessing the preferences file", and a person had to dismiss three windows before
+it ended as a crash. The next launch then opened on the crash-recovery window.
+
+After Effects rewrites `…\Adobe\After Effects\<version>\*.txt` by writing a temporary file
+and renaming it. It does that **when it starts, when it quits, and when a project is
+saved**. If another instance is starting at that moment the rename fails. There is no
+supported way to give an instance its own preferences folder: launching with a different
+`APPDATA` made no difference, After Effects still wrote to the real one.
+
+**Fix (as far as it goes):**
+
+- `-NewInstance` now passes a start/stop gate: one instance starts or quits at a time. The
+  runner holds the gate until the instance reports it has finished starting
+  (`_started.txt`), and the instance does not quit until the runner, holding the gate
+  again, creates `_quit_ok.txt`.
+- The wait for that signal is a scheduled task, not a loop. With a `$.sleep` loop, 2
+  instances in 8 closed their project, showed the Home screen and never quit; they
+  ignored every polite request to close. With a scheduled task: 21 in 21 quit.
+- **The gate does not cover saving.** A job that saves while another instance is still
+  starting can still raise a (dismissable) "cannot rename the preferences file" warning.
+  The 21-in-21 result was measured with all instances of a round started first and work
+  begun only after the last one was up. If you cannot arrange that, run one instance at
+  a time.
+
+## 21. A job that leaves the project modified stops the quit on "save changes?"
+
+**Observed November 2026:** after `renderQueue.queueInAME(false)` the project is marked
+modified every time (30 of 30). An instance that then quits asks whether to save, and
+nobody is there to answer.
+
+**Fix:** save again after queueing. As a backstop, an instance started with `-NewInstance`
+that still has unsaved changes at the end closes the project without saving and adds
+`WARN unsaved-changes-discarded` to the result: saving is the job's business, hanging is
+not an option.
+
+## 22. Right after `queueInAME`, the same script can die with "another context is already active"
+
+**Observed November 2026 (After Effects 26.5 with Media Encoder 26.5):** a job that queued
+a composition to Media Encoder and then saved and closed the project in the same script
+failed 6 times in 14 with `After Effects error: internal verification failure, sorry!
+{another context is already active}`. Twice After Effects put up an alert and the job
+stalled until it was dismissed. A pause before the next job (5 s, 15 s) did not help, nor
+did retrying inside the script. In 5 of the 6 failures the composition **had** been
+queued and was encoded: the verdict said FAIL but the work was done.
+
+**Fix:** make `queueInAME(false)` the last statement of its script, and do the save and
+close in a second script a few seconds later: 22 in 22. Treat a failed queue job as
+"maybe queued" — look for the `<project>.aep_AME` folder next to the project before
+queueing again, or the same file is rendered twice. The cause is not known.
