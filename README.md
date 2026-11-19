@@ -118,6 +118,14 @@ matches, so a job that lands in somebody else's After Effects does nothing and q
 nothing. The new instance shows a normal window while it works. Two instances on the
 **same** project file overwrite each other (trap 18): give each job its own `.aep`.
 
+Instances share one preferences folder, and After Effects rewrites it on start, on quit
+and on every save (trap 20). `-NewInstance` therefore starts and quits instances one at
+a time through a gate; the result carries `GateWait` (seconds spent waiting for it),
+`QuitClean` and `ProcessId`. The gate does not cover saving: start every instance of a
+batch before the first one begins work, or run one at a time. A job that leaves the
+project modified is closed without saving, with `WARN unsaved-changes-discarded` in the
+result (trap 21).
+
 **It cannot render frames.** `saveFrameToPng` writes nothing under `-r` and raises
 nothing — 0 of 10 comps, where the relay wrote 10 of 10. Use `aerender` for frames;
 it is the supported headless renderer and it too is happy while Premiere is open.
